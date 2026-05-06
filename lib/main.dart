@@ -5,39 +5,19 @@ void main() {
   runApp(MyApp());
 }
 
-class MyApp extends StatefulWidget {
-  MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  final List<Task> tasks = [
-    Task(title: "nauczyć się na kolokwium", deadline: "29.03.2026"),
-    Task(title: "zrobić zakupy", deadline: "30.03.2026"),
-    Task(title: "zrobić zadanie z angielskiego", deadline: "29.03.2026"),
-    Task(title: "zrobić zadanie z sieci", deadline: "03.04.2026"),
-  ];
-
-
-  void addTask() {
-    setState(() {
-      tasks.add(Task(title: "nowe zadanie", deadline: "10.04.2026"));
-    });
-  }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Lista zadań',
-      home: HomeScreen(
-        tasks: tasks,
-        addTask: addTask,
-      ),
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const HomeScreen(),
     );
   }
 }
+
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({super.key});
@@ -50,19 +30,8 @@ class AddTaskScreen extends StatefulWidget {
 class _AddTaskScreenState extends State<AddTaskScreen> {
   final TextEditingController titleController = TextEditingController();
   final TextEditingController deadlineController = TextEditingController();
+  final TextEditingController priorityController = TextEditingController();
 
-  void saveTask() {
-    final String title = titleController.text;
-    final String deadline = deadlineController.text;
-
-    final newTask = Task(
-      title: title,
-      deadline: deadline,
-      done: false,
-    );
-
-    Navigator.pop(context, newTask);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -87,12 +56,20 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 labelText: "Termin",
               ),
             ),
+            TextField(
+              controller: priorityController,
+              decoration: const InputDecoration(
+                labelText: "Priorytet",
+              ),
+            ),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () {
                 final newTask = Task(
                   title: titleController.text,
                   deadline: deadlineController.text,
+                  priority: priorityController.text,
+                  done: false,
                 );
                 Navigator.pop(context, newTask);
               },
@@ -106,14 +83,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 }
 
 class HomeScreen extends StatefulWidget {
-  final List<Task> tasks;
-  final VoidCallback addTask;
 
   const HomeScreen({
-    super.key,
-    required this.tasks,
-    required this.addTask,
-  });
+    super.key,});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -141,14 +113,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
           Expanded(
             child: ListView.builder(
-              itemCount: widget.tasks.length,
+              itemCount: TaskRepository.tasks.length,
               itemBuilder: (context, index) {
-                final task = widget.tasks[index];
-
+                final task = TaskRepository.tasks[index];
                 return TaskCard(
                   title: task.title,
                   subtitle: "Termin: ${task.deadline}",
-                  icon: Icons.check_circle_outline,
+                  icon: task.done ? Icons.check_circle : Icons.check_circle_outline,
                 );
               },
             ),
