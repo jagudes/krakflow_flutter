@@ -8,6 +8,8 @@ class Task {
 }
 
 class TaskRepository {
+  static String selectedFilter = "Wszystkie";
+
   static List<Task> tasks = [
     Task(title: "nauczyć się na kolokwium",priority: "wysoki", deadline: "29.03.2026"),
     Task(title: "zrobić zakupy",priority: "niski", deadline: "30.03.2026"),

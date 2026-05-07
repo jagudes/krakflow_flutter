@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'task_repository.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../models/task.dart';
+import 'dart:math';
 
 void main() {
   runApp(MyApp());
@@ -24,6 +28,37 @@ class AddTaskScreen extends StatefulWidget {
 
   @override
   State<AddTaskScreen> createState() => _AddTaskScreenState();
+}
+
+class TaskApiService {
+  static const String baseUrl = 'https://dummyjson.com/todos';
+
+  static Future<List<Task>> fetchTasks() async {
+    final response = await http.get(Uri.parse(baseUrl));
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final List todosJson = data['todos'];
+
+      final random = Random();
+      final priorities = ["niski", "średni", "wysoki"];
+
+      return todosJson.map((json) {
+        final randomPriority = priorities[random.nextInt(priorities.length)];
+        final randomDay = random.nextInt(28) + 1;
+        final randomDeadline = "$randomDay.05.2026";
+
+        return Task(
+          title: json['todo'],
+          done: json['completed'],
+          priority: randomPriority,
+          deadline: randomDeadline,
+        );
+      }).toList();
+    } else {
+      throw Exception('Nie udało się pobrać zadań');
+    }
+  }
 }
 
 
@@ -70,6 +105,29 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String selectedFilter = 'wszystkie';
+  bool isLoading = true;
+
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTasksFromApi();
+  }
+
+  Future<void> _loadTasksFromApi() async {
+    try {
+      final apiTasks = await TaskApiService.fetchTasks();
+      setState(() {
+        TaskRepository.tasks = apiTasks;
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() => isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Błąd pobierania: $e")),
+      );
+    }
+  }
 
   void _showDeleteAllDialog() {
     if (TaskRepository.tasks.isEmpty) {
@@ -110,12 +168,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    List<Task> filteredTasks = TaskRepository.tasks;
-    if (selectedFilter == "wykonane") {
-      filteredTasks = TaskRepository.tasks.where((t) => t.done).toList();
-    } else if (selectedFilter == "do zrobienia") {
-      filteredTasks = TaskRepository.tasks.where((t) => !t.done).toList();
-    }
     return Scaffold(
       appBar: AppBar(title: const Text("Moje zadania"),
         actions: [
@@ -134,58 +186,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 8),
             FilterBar(
-              selectedFilter: selectedFilter,
               onFilterChanged: (value) {
                 setState(() => selectedFilter = value);
               },
             ),
           Expanded(
-            child: ListView.builder(
-              itemCount:filteredTasks.length,
-              itemBuilder: (context, index) {
-                final task = filteredTasks[index];
-                return Dismissible(
-                  key: ObjectKey(task),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  onDismissed: (direction) {
-                    setState(() {
-                      TaskRepository.tasks.remove(task);
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Usunięto: ${task.title}")),
-                    );
-                  },
-                  child: TaskCard(
-                    title: task.title,
-                    subtitle: "Termin: ${task.deadline} | Priorytet: ${task.priority}",
-                    done: task.done,
-                    onChanged: (value) {
-                      setState(() => task.done = value!);
-                    },
-                    onTap: () async {
-                      final Task? updatedTask = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => EditTaskScreen(task: task),
-                        ),
-                      );
-                      if (updatedTask != null) {
-                        setState(() {
-                          int originalIndex = TaskRepository.tasks.indexOf(task);
-                          TaskRepository.tasks[originalIndex] = updatedTask;
-                        });
-                      }
-                    },
-                  ),
-                );
-              },
-            ),
+            child: TaskListScreen(),
           ),
     ],
         ),
@@ -209,13 +215,89 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
+class TaskListScreen extends StatefulWidget {
+  const TaskListScreen({super.key});
+  @override
+  State<TaskListScreen> createState() => _TaskListScreenState();
+}
+
+class _TaskListScreenState extends State<TaskListScreen> {
+  late Future<List<Task>> tasksFuture;
+  @override
+  void initState() {
+    super.initState();
+    tasksFuture = TaskApiService.fetchTasks();
+  }
+  @override
+  Widget build(BuildContext context) {
+    List<Task> filteredTasks = TaskRepository.tasks;
+    if (TaskRepository.selectedFilter == "wykonane") {
+      filteredTasks = TaskRepository.tasks.where((t) => t.done).toList();
+    } else if (TaskRepository.selectedFilter == "do zrobienia") {
+      filteredTasks = TaskRepository.tasks.where((t) => !t.done).toList();
+    }
+
+    return FutureBuilder<List<Task>>(
+      future: tasksFuture,
+      builder: (context, snapshot) {
+        final tasks = snapshot.data ?? [];
+        return ListView.builder(
+          itemCount: tasks.length,
+          itemBuilder: (context, index) {
+            final task = filteredTasks[index];
+            return Dismissible(
+              key: ObjectKey(task),
+              direction: DismissDirection.endToStart,
+              background: Container(
+                color: Colors.red,
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 20),
+                child: const Icon(Icons.delete, color: Colors.white),
+              ),
+              onDismissed: (direction) {
+                setState(() {
+                  TaskRepository.tasks.remove(task);
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Usunięto: ${task.title}")),
+                );
+              },
+              child: TaskCard(
+                title: task.title,
+                subtitle: "Termin: ${task.deadline} | Priorytet: ${task.priority}",
+                done: task.done,
+                onChanged: (value) {
+                  setState(() => task.done = value!);
+                },
+                onTap: () async {
+                  final Task? updatedTask = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => EditTaskScreen(task: task),
+                    ),
+                  );
+                  if (updatedTask != null) {
+                    setState(() {
+                      int originalIndex = TaskRepository.tasks.indexOf(task);
+                      TaskRepository.tasks[originalIndex] = updatedTask;
+                    });
+                  }
+                },
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 class FilterBar extends StatelessWidget {
-  final String selectedFilter;
   final Function(String) onFilterChanged;
 
   const FilterBar({
     super.key,
-    required this.selectedFilter,
     required this.onFilterChanged,
   });
 
@@ -237,7 +319,7 @@ class FilterBar extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          color: selectedFilter == value ? Colors.blue : Colors.grey,
+          color: TaskRepository.selectedFilter == value ? Colors.blue : Colors.grey,
         ),
       ),
     );
