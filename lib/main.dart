@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
-import 'task_repository.dart';
+import 'models/task.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../models/task.dart';
 import 'dart:math';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'services/task_api_service.dart';
+import 'services/task_local_database.dart';
+import 'services/task_sync_service.dart';
 
-void main() {
+
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Hive.initFlutter();
+  await Hive.openBox("tasks");
   runApp(MyApp());
 }
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -30,36 +40,6 @@ class AddTaskScreen extends StatefulWidget {
   State<AddTaskScreen> createState() => _AddTaskScreenState();
 }
 
-class TaskApiService {
-  static const String baseUrl = 'https://dummyjson.com/todos';
-
-  static Future<List<Task>> fetchTasks() async {
-    final response = await http.get(Uri.parse(baseUrl));
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final List todosJson = data['todos'];
-
-      final random = Random();
-      final priorities = ["niski", "średni", "wysoki"];
-
-      return todosJson.map((json) {
-        final randomPriority = priorities[random.nextInt(priorities.length)];
-        final randomDay = random.nextInt(28) + 1;
-        final randomDeadline = "$randomDay.05.2026";
-
-        return Task(
-          title: json['todo'],
-          done: json['completed'],
-          priority: randomPriority,
-          deadline: randomDeadline,
-        );
-      }).toList();
-    } else {
-      throw Exception('Nie udało się pobrać zadań');
-    }
-  }
-}
 
 
 class _AddTaskScreenState extends State<AddTaskScreen> {
@@ -83,7 +63,15 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
             ElevatedButton(
               onPressed: () {
-                Navigator.pop(context, Task(title: titleController.text, priority: priorityController.text, deadline: deadlineController.text,));
+                Navigator.pop( context,
+                  Task(
+                    id: Random().nextInt(1000000),
+                    title: titleController.text,
+                    priority: priorityController.text,
+                    deadline: deadlineController.text,
+                    done: false,
+                  ),
+                );
               },
               child: const Text("Zapisz"),
             ),
@@ -105,32 +93,15 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   String selectedFilter = 'wszystkie';
-  bool isLoading = true;
-
 
   @override
   void initState() {
     super.initState();
-    _loadTasksFromApi();
   }
 
-  Future<void> _loadTasksFromApi() async {
-    try {
-      final apiTasks = await TaskApiService.fetchTasks();
-      setState(() {
-        TaskRepository.tasks = apiTasks;
-        isLoading = false;
-      });
-    } catch (e) {
-      setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Błąd pobierania: $e")),
-      );
-    }
-  }
 
   void _showDeleteAllDialog() {
-    if (TaskRepository.tasks.isEmpty) {
+    if (TaskLocalDatabase.getTasks().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Lista jest już pusta")),
       );
@@ -151,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
               TextButton(
                 onPressed: () {
                   setState(() {
-                    TaskRepository.tasks.clear();
+                    TaskLocalDatabase.getTasks().clear();
                   });
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -182,7 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Text("Masz dziś ${TaskRepository.tasks.length} zadania"),
+            child: Text("Masz dziś ${TaskLocalDatabase.getTasks().length} zadania"),
             ),
             const SizedBox(height: 8),
             FilterBar(
@@ -191,7 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           Expanded(
-            child: TaskListScreen(),
+            child: TaskListScreen(selectedFilter: selectedFilter,),
           ),
     ],
         ),
@@ -205,9 +176,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
           if (newTask != null) {
-            setState(() {
-              TaskRepository.tasks.add(newTask);
-            });
+            await TaskLocalDatabase.addTask(newTask);
+            setState(() {});
           }
         },
         child: const Icon(Icons.add),
@@ -217,7 +187,11 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class TaskListScreen extends StatefulWidget {
-  const TaskListScreen({super.key});
+  final String selectedFilter;
+
+  const TaskListScreen({
+    super.key,
+    required this.selectedFilter,});
   @override
   State<TaskListScreen> createState() => _TaskListScreenState();
 }
@@ -227,7 +201,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
   @override
   void initState() {
     super.initState();
-    tasksFuture = TaskApiService.fetchTasks();
+    tasksFuture = loadTasks();
+  }
+  Future<List<Task>> loadTasks() async {
+    await TaskSyncService.loadInitialDataIfNeeded();
+
+    return TaskLocalDatabase.getTasks();
   }
   @override
   Widget build(BuildContext context) {
@@ -256,9 +235,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 child: const Icon(Icons.delete, color: Colors.white),
               ),
               onDismissed: (direction) {
-                setState(() {
-                  TaskRepository.tasks.remove(task);
-                });
+                  TaskLocalDatabase.deleteTask(task.id);
+                  setState(() {
+                    tasksFuture = loadTasks();
+                  });
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text("Usunięto: ${task.title}")),
                 );
@@ -267,8 +248,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 title: task.title,
                 subtitle: "Termin: ${task.deadline} | Priorytet: ${task.priority}",
                 done: task.done,
-                onChanged: (value) {
-                  setState(() => task.done = value!);
+                onChanged: (value) async {
+                  final updatedTask = Task(
+                    id: task.id,
+                    title: task.title,
+                    deadline: task.deadline,
+                    priority: task.priority,
+                    done: value ?? false,
+                  );
+
+                  await TaskLocalDatabase.updateTask(updatedTask);
+
+                  setState(() {
+                    tasksFuture = loadTasks();
+                  });
                 },
                 onTap: () async {
                   final Task? updatedTask = await Navigator.push(
@@ -279,7 +272,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                   );
                   if (updatedTask != null) {
                     setState(() {
-                      int originalIndex = TaskRepository.tasks.indexOf(task);
+                      int originalIndex = TaskLocalDatabase.getTasks().indexOf(task);
                       TaskRepository.tasks[originalIndex] = updatedTask;
                     });
                   }
